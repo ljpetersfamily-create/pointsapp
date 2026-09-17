@@ -566,8 +566,11 @@
 
     .avatar-select {
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
-      overflow-x: auto;
+      justify-content: center;
+      max-height: 160px;
+      overflow-y: auto;
       padding: 4px 0;
     }
 
@@ -870,8 +873,9 @@
           <button class="keypad-btn" onclick="pressPin('9')">9</button>
           <button class="keypad-btn" onclick="clearPin()">C</button>
           <button class="keypad-btn" onclick="pressPin('0')">0</button>
-          <button class="keypad-btn" onclick="closePinModal()">❌</button>
+          <button class="keypad-btn" onclick="backspacePin()">⌫</button>
         </div>
+        <button class="btn-secondary" style="margin-top: 4px;" onclick="closePinModal()">Cancel</button>
       </div>
     </div>
 
@@ -904,6 +908,24 @@
             <span class="avatar-option" onclick="selectAvatar(this, '🚀')">🚀</span>
             <span class="avatar-option" onclick="selectAvatar(this, '🐼')">🐼</span>
             <span class="avatar-option" onclick="selectAvatar(this, '🎨')">🎨</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🐶')">🐶</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🐱')">🐱</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🐰')">🐰</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🐻')">🐻</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🐨')">🐨</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🐯')">🐯</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🐸')">🐸</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🦊')">🦊</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🐵')">🐵</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🦋')">🦋</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🐬')">🐬</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🦈')">🦈</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '⚽')">⚽</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🎸')">🎸</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '👑')">👑</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '⭐')">⭐</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🌈')">🌈</span>
+            <span class="avatar-option" onclick="selectAvatar(this, '🔥')">🔥</span>
           </div>
         </div>
         <button class="btn-primary" onclick="saveKidProfile()">Save</button>
@@ -1160,6 +1182,13 @@
     function clearPin() {
       pinBuffer = "";
       updatePinDots();
+    }
+
+    function backspacePin() {
+      if (pinBuffer.length > 0) {
+        pinBuffer = pinBuffer.slice(0, -1);
+        updatePinDots();
+      }
     }
 
     function updatePinDots() {
@@ -1614,7 +1643,7 @@
     // type="module"> are module-scoped, not global.
     Object.assign(window, {
       signInWithGoogle, handleSignOut, handlePointAction, requireParentPin,
-      toggleFridayOverride, switchTab, pressPin, clearPin, closePinModal,
+      toggleFridayOverride, switchTab, pressPin, clearPin, backspacePin, closePinModal,
       openAddKidForm, editKid, closeModal, selectAvatar, saveKidProfile, deleteKid, buyPrize,
       openRewardsManageModal, openAddRewardForm, editReward, saveReward, deleteReward
     });
