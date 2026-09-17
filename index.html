@@ -807,9 +807,12 @@
           <div class="friday-tag" id="friday-tag">Friday Mode</div>
         </div>
 
-        <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
           <div class="section-title" style="margin-bottom:0;">Available Rewards</div>
-          <button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="requireParentPin(toggleFridayOverride)">Toggle Mode</button>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="requireParentPin(openRewardsManageModal)">Manage</button>
+            <button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="requireParentPin(toggleFridayOverride)">Toggle Mode</button>
+          </div>
         </div>
 
         <div class="store-grid" id="store-grid">
@@ -908,6 +911,39 @@
       </div>
     </div>
 
+    <!-- MODAL: MANAGE REWARDS -->
+    <div class="modal-overlay" id="rewards-modal">
+      <div class="modal-card">
+        <div class="modal-title">Manage Rewards</div>
+        <div id="rewards-manage-list" style="display:flex; flex-direction:column; gap:8px; max-height:280px; overflow-y:auto;">
+          <!-- List of rewards -->
+        </div>
+        <button class="btn-primary" onclick="openAddRewardForm()">+ Add New Reward</button>
+        <button class="btn-secondary" onclick="closeModal('rewards-modal')">Close</button>
+      </div>
+    </div>
+
+    <!-- MODAL: ADD/EDIT REWARD -->
+    <div class="modal-overlay" id="add-reward-modal">
+      <div class="modal-card">
+        <div class="modal-title" id="reward-form-title">Add Reward</div>
+        <div class="input-group">
+          <label>Reward Name</label>
+          <input type="text" id="reward-title-input" placeholder="e.g. Movie Night">
+        </div>
+        <div class="input-group">
+          <label>Star Cost</label>
+          <input type="number" id="reward-cost-input" min="1" step="1" placeholder="e.g. 25">
+        </div>
+        <div class="input-group">
+          <label>Icon (any emoji)</label>
+          <input type="text" id="reward-icon-input" placeholder="🎁" maxlength="4">
+        </div>
+        <button class="btn-primary" onclick="saveReward()">Save</button>
+        <button class="btn-secondary" onclick="closeModal('add-reward-modal')">Cancel</button>
+      </div>
+    </div>
+
   </div>
 
   <script type="module">
@@ -924,7 +960,7 @@
     // ============================================================
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
     import { getFirestore, doc, setDoc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyBsfBg1Ejl4XQe5ou1zDALOqPXuh7UWFkA",
@@ -967,6 +1003,7 @@
     let pendingAction = null;
     let selectedAvatar = "🦁";
     let editingKidId = null;
+    let editingRewardId = null;
     let unsubscribeSnapshot = null;
 
     // --- AUDIO SYSTEM (Web Audio API) ---
@@ -1010,6 +1047,13 @@
 
     // --- AUTH / SIGN-IN GATE ---
     function initApp() {
+      // Surfaces any error from a signInWithRedirect() that just completed
+      // (the page navigated to Google and back to get here).
+      getRedirectResult(auth).catch((err) => {
+        console.error('Redirect sign-in failed:', err);
+        document.getElementById('signin-status').innerText = 'Sign-in failed. Please try again.';
+      });
+
       onAuthStateChanged(auth, (user) => {
         if (user && ALLOWED_EMAILS.includes(user.email)) {
           document.getElementById('signin-overlay').classList.remove('active');
@@ -1031,7 +1075,11 @@
 
     function signInWithGoogle() {
       document.getElementById('signin-status').innerText = 'Signing in...';
-      signInWithPopup(auth, provider).catch((err) => {
+      // signInWithRedirect navigates to Google and back, avoiding the
+      // popup<->opener storage handshake that signInWithPopup needs (that
+      // handshake is what breaks with the "missing initial state" error
+      // under browser storage partitioning / strict tracking prevention).
+      signInWithRedirect(auth, provider).catch((err) => {
         console.error('Sign-in failed:', err);
         document.getElementById('signin-status').innerText = 'Sign-in failed. Please try again.';
       });
@@ -1098,8 +1146,9 @@
       if (pinBuffer.length === 4) {
         setTimeout(() => {
           if (pinBuffer === appData.parentPin) {
+            const action = pendingAction; // grab this BEFORE closePinModal() nulls it out
             closePinModal();
-            if (pendingAction) pendingAction();
+            if (action) action();
           } else {
             alert('Incorrect PIN!');
             clearPin();
@@ -1253,6 +1302,90 @@
         renderKidsManageList();
         renderKidsBar();
         renderDashboard();
+      }
+    }
+
+    // --- REWARD (STORE ITEM) MANAGEMENT ---
+    function openRewardsManageModal() {
+      renderRewardsManageList();
+      document.getElementById('rewards-modal').classList.add('active');
+    }
+
+    function renderRewardsManageList() {
+      const container = document.getElementById('rewards-manage-list');
+      container.innerHTML = '';
+
+      if (!appData.prizes || appData.prizes.length === 0) {
+        container.innerHTML = '<div style="text-align:center; color:#999; padding:12px;">No rewards yet!</div>';
+        return;
+      }
+
+      appData.prizes.forEach(prize => {
+        const item = document.createElement('div');
+        item.style.cssText = "display:flex; justify-content:space-between; align-items:center; background:#f0f0f0; padding:8px 12px; border-radius:8px;";
+        item.innerHTML = `
+          <span>${prize.icon} ${prize.title} (${prize.cost} ⭐)</span>
+          <div style="display:flex; gap:6px;">
+            <button onclick="editReward(${prize.id})" style="border:none; background:#0984e3; color:white; padding:4px 8px; border-radius:4px; cursor:pointer;">Edit</button>
+            <button onclick="deleteReward(${prize.id})" style="border:none; background:#ff7675; color:white; padding:4px 8px; border-radius:4px; cursor:pointer;">Delete</button>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    function openAddRewardForm() {
+      closeModal('rewards-modal');
+      editingRewardId = null;
+      document.getElementById('reward-form-title').innerText = "Add Reward";
+      document.getElementById('reward-title-input').value = "";
+      document.getElementById('reward-cost-input').value = "";
+      document.getElementById('reward-icon-input').value = "🎁";
+      document.getElementById('add-reward-modal').classList.add('active');
+    }
+
+    function editReward(id) {
+      const prize = appData.prizes.find(p => p.id === id);
+      if (!prize) return;
+      closeModal('rewards-modal');
+      editingRewardId = id;
+      document.getElementById('reward-form-title').innerText = "Edit Reward";
+      document.getElementById('reward-title-input').value = prize.title;
+      document.getElementById('reward-cost-input').value = prize.cost;
+      document.getElementById('reward-icon-input').value = prize.icon;
+      document.getElementById('add-reward-modal').classList.add('active');
+    }
+
+    function saveReward() {
+      const title = document.getElementById('reward-title-input').value.trim();
+      const cost = parseInt(document.getElementById('reward-cost-input').value, 10);
+      const icon = document.getElementById('reward-icon-input').value.trim() || '🎁';
+
+      if (!title) return alert('Please enter a reward name');
+      if (!cost || cost < 1) return alert('Please enter a star cost of 1 or more');
+
+      if (editingRewardId) {
+        const prize = appData.prizes.find(p => p.id === editingRewardId);
+        if (prize) {
+          prize.title = title;
+          prize.cost = cost;
+          prize.icon = icon;
+        }
+      } else {
+        appData.prizes.push({ id: Date.now(), title, cost, icon });
+      }
+
+      saveData();
+      closeModal('add-reward-modal');
+      renderStore();
+    }
+
+    function deleteReward(id) {
+      if (confirm('Delete this reward?')) {
+        appData.prizes = appData.prizes.filter(p => p.id !== id);
+        saveData();
+        renderRewardsManageList();
+        renderStore();
       }
     }
 
@@ -1482,7 +1615,8 @@
     Object.assign(window, {
       signInWithGoogle, handleSignOut, handlePointAction, requireParentPin,
       toggleFridayOverride, switchTab, pressPin, clearPin, closePinModal,
-      openAddKidForm, editKid, closeModal, selectAvatar, saveKidProfile, deleteKid, buyPrize
+      openAddKidForm, editKid, closeModal, selectAvatar, saveKidProfile, deleteKid, buyPrize,
+      openRewardsManageModal, openAddRewardForm, editReward, saveReward, deleteReward
     });
 
     // Run on launch
