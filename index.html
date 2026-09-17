@@ -923,7 +923,7 @@
     //    to request.auth.token.email in your whitelist.
     // ============================================================
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import { getFirestore, doc, setDoc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
     import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
     const firebaseConfig = {
@@ -1168,8 +1168,24 @@
     function openAddKidForm() {
       closeModal('kids-modal');
       editingKidId = null;
+      selectedAvatar = '🦁';
       document.getElementById('kid-form-title').innerText = "Add Child";
       document.getElementById('kid-name-input').value = "";
+      document.querySelectorAll('.avatar-option').forEach((a, i) => a.classList.toggle('selected', i === 0));
+      document.getElementById('add-kid-modal').classList.add('active');
+    }
+
+    function editKid(id) {
+      const kid = appData.kids.find(k => k.id === id);
+      if (!kid) return;
+      closeModal('kids-modal');
+      editingKidId = id;
+      selectedAvatar = kid.avatar;
+      document.getElementById('kid-form-title').innerText = "Edit Child";
+      document.getElementById('kid-name-input').value = kid.name;
+      document.querySelectorAll('.avatar-option').forEach(a => {
+        a.classList.toggle('selected', a.textContent.trim() === kid.avatar);
+      });
       document.getElementById('add-kid-modal').classList.add('active');
     }
 
@@ -1217,7 +1233,8 @@
         item.style.cssText = "display:flex; justify-content:space-between; align-items:center; background:#f0f0f0; padding:8px 12px; border-radius:8px;";
         item.innerHTML = `
           <span>${kid.avatar} ${kid.name} (${kid.points} pts)</span>
-          <div>
+          <div style="display:flex; gap:6px;">
+            <button onclick="editKid('${kid.id}')" style="border:none; background:#0984e3; color:white; padding:4px 8px; border-radius:4px; cursor:pointer;">Edit</button>
             <button onclick="deleteKid('${kid.id}')" style="border:none; background:#ff7675; color:white; padding:4px 8px; border-radius:4px; cursor:pointer;">Delete</button>
           </div>
         `;
@@ -1244,26 +1261,43 @@
       requireParentPin(() => applyPoints(amount));
     }
 
-    function applyPoints(amount) {
-      const kid = getActiveKid();
+    async function applyPoints(amount) {
+      const activeId = appData.activeKidId;
       const reasonInput = document.getElementById('reason-input');
       const reason = reasonInput.value.trim() || (amount > 0 ? 'Good Behavior' : 'Adjustment');
-
-      kid.points = Math.max(0, kid.points + amount);
-      
-      kid.history.unshift({
-        id: Date.now(),
-        reason: reason,
-        points: amount,
-        date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-      });
-
       reasonInput.value = '';
-      saveData();
-      renderDashboard();
-      renderHistory();
-      renderStore();
 
+      // Applied as a transaction: it reads the LATEST server data right
+      // before writing, so a point change made on another device a moment
+      // ago can't get silently overwritten by this one (the old saveData()
+      // approach just wrote whatever was in local memory, which could lose
+      // a concurrent change from another device).
+      try {
+        await runTransaction(db, async (transaction) => {
+          const snap = await transaction.get(DATA_DOC);
+          if (!snap.exists()) throw new Error('doc-missing');
+          const data = snap.data();
+          const kid = data.kids.find(k => k.id === activeId);
+          if (!kid) throw new Error('kid-missing');
+
+          kid.points = Math.max(0, kid.points + amount);
+          kid.history.unshift({
+            id: Date.now(),
+            reason: reason,
+            points: amount,
+            date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          });
+
+          transaction.set(DATA_DOC, data);
+        });
+      } catch (err) {
+        console.error('Point update failed:', err);
+        alert('Could not save that change — check your connection and try again.');
+        return;
+      }
+
+      // The onSnapshot listener picks up the transaction's result and
+      // re-renders automatically, so no manual render calls are needed here.
       if (amount > 0) {
         playSound('gain');
         confetti({ particleCount: 50 * amount, spread: 60, origin: { y: 0.7 } });
@@ -1369,27 +1403,44 @@
       });
     }
 
-    function buyPrize(prizeId) {
-      const kid = getActiveKid();
-      const prize = appData.prizes.find(p => p.id === prizeId);
+    async function buyPrize(prizeId) {
+      const activeId = appData.activeKidId;
+      const prizeLocal = appData.prizes.find(p => p.id === prizeId);
+      if (!prizeLocal) return;
 
-      if (kid && prize && kid.points >= prize.cost) {
-        kid.points -= prize.cost;
-        kid.history.unshift({
-          id: Date.now(),
-          reason: `Redeemed: ${prize.title}`,
-          points: -prize.cost,
-          date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      try {
+        await runTransaction(db, async (transaction) => {
+          const snap = await transaction.get(DATA_DOC);
+          if (!snap.exists()) throw new Error('doc-missing');
+          const data = snap.data();
+          const kid = data.kids.find(k => k.id === activeId);
+          const prize = data.prizes.find(p => p.id === prizeId);
+          if (!kid || !prize) throw new Error('not-found');
+          if (kid.points < prize.cost) throw new Error('insufficient-points');
+
+          kid.points -= prize.cost;
+          kid.history.unshift({
+            id: Date.now(),
+            reason: `Redeemed: ${prize.title}`,
+            points: -prize.cost,
+            date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          });
+
+          transaction.set(DATA_DOC, data);
         });
-
-        saveData();
-        renderDashboard();
-        renderHistory();
-        renderStore();
-        playSound('buy');
-        confetti({ particleCount: 100, spread: 80, origin: { y: 0.6 } });
-        alert(`🎉 You redeemed: ${prize.title}!`);
+      } catch (err) {
+        if (err.message === 'insufficient-points') {
+          alert('Not enough stars for that yet — someone else may have just spent some!');
+        } else {
+          console.error('Redemption failed:', err);
+          alert('Could not redeem — check your connection and try again.');
+        }
+        return;
       }
+
+      playSound('buy');
+      confetti({ particleCount: 100, spread: 80, origin: { y: 0.6 } });
+      alert(`🎉 You redeemed: ${prizeLocal.title}!`);
     }
 
     // --- NAVIGATION ---
@@ -1431,7 +1482,7 @@
     Object.assign(window, {
       signInWithGoogle, handleSignOut, handlePointAction, requireParentPin,
       toggleFridayOverride, switchTab, pressPin, clearPin, closePinModal,
-      openAddKidForm, closeModal, selectAvatar, saveKidProfile, deleteKid, buyPrize
+      openAddKidForm, editKid, closeModal, selectAvatar, saveKidProfile, deleteKid, buyPrize
     });
 
     // Run on launch
